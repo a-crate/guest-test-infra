@@ -3,8 +3,8 @@ resources:
 - name: guest-test-infra
   type: git
   source:
-    uri: https://github.com/GoogleCloudPlatform/guest-test-infra.git
-    branch: master
+    uri: https://github.com/a-crate/guest-test-infra.git
+    branch: concourse-local
 
 # Controller pipeline. Add pipelines here to have them kept up to date automatically.
 #
