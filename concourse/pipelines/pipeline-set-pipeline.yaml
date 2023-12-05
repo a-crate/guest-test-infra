@@ -1,9 +1,9 @@
 ---
 resource_types:
-- name: guest-image-private
+- name: custom-image-poc
   type: registry-image
   source:
-    repository: gcr.io/compute-image-tools/registry-image-forked
+    repository: concourse/registry-image-resource
 resources:
 - name: guest-test-infra
   type: git

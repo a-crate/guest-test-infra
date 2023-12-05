@@ -1,11 +1,10 @@
 platform: linux
 
 image_resource:
-  type: guest-image-private
+  type: custom-type-poc
   source:
-    repository: gcr.io/gcp-guest/jsonnet-go
+    repository: busybox
     tag: latest
-    google_auth: true
 
 inputs:
 - name: guest-test-infra
@@ -17,8 +16,5 @@ run:
   path: sh
   args:
   - -exc
-  - |
-    for template in guest-test-infra/((config_dir))/*.jsonnet; do
-      base=$(basename "$template")
-      jsonnet $template > rendered/${base//.jsonnet}.json
-    done
+  - echo hello-world
+
