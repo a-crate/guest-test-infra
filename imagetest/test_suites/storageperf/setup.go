@@ -82,6 +82,13 @@ var storagePerfTestConfig = []storagePerfTest{
 		cpuMetric:   "T2A_CPUS",
 	},
 	{
+		arch:             "X86_64",
+		machineType:      "n4-standard-48",
+		cpuMetric:        "CPUS",
+		requiredFeatures: []string{"GVNIC"},
+		diskType:         imagetest.HyperdiskBalanced,
+	},
+	{
 		arch:        "X86_64",
 		machineType: "n2-standard-80",
 		diskType:    imagetest.HyperdiskExtreme,

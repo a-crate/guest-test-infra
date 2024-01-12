@@ -80,6 +80,12 @@ var hyperdiskIOPSMap = map[string]PerformanceTargets{
 		seqReadBW:     5000.0,
 		seqWriteBW:    5000.0,
 	},
+	"n4-standard-48": {
+		randReadIOPS:  160000.0,
+		randWriteIOPS: 160000.0,
+		seqReadBW:     2400.0,
+		seqWriteBW:    2400.0,
+	},
 }
 
 var pdbalanceIOPSMap = map[string]PerformanceTargets{

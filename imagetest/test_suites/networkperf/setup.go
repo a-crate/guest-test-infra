@@ -73,6 +73,18 @@ var networkPerfTestConfig = []networkPerfTest{
 		networks:    []string{"DEFAULT", "TIER_1"},
 		quota:       &daisy.QuotaAvailable{Metric: "N2D_CPUS", Units: 288},
 	},
+	{
+		machineType: "n4-standard-16",
+		arch:        "X86_64",
+		networks:    []string{"DEFAULT"},
+		quota:       &daisy.QuotaAvailable{Metric: "CPUS", Units: 64},
+	},
+	{
+		machineType: "n4-standard-64",
+		arch:        "X86_64",
+		networks:    []string{"DEFAULT"},
+		quota:       &daisy.QuotaAvailable{Metric: "CPUS", Units: 256},
+	},
 }
 
 // InstanceConfig for setting up test VMs.
