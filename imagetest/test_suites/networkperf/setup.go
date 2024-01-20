@@ -80,7 +80,7 @@ var networkPerfTestConfig = []networkPerfTest{
 		quota:       &daisy.QuotaAvailable{Metric: "CPUS", Units: 64},
 	},
 	{
-		machineType: "n4-standard-64",
+		machineType: "n4-standard-96",
 		arch:        "X86_64",
 		networks:    []string{"DEFAULT"},
 		quota:       &daisy.QuotaAvailable{Metric: "CPUS", Units: 256},
