@@ -2,9 +2,9 @@ package storageperf
 
 import (
 	"embed"
+	"flag"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 
 	daisy "github.com/GoogleCloudPlatform/compute-daisy"
@@ -19,7 +19,10 @@ var Name = "storageperf"
 //go:embed startupscripts/*
 var scripts embed.FS
 
+var testFilter = flag.String("storageperf_test_filter", ".*", "regexp filter for storageperf test cases, only cases with a matching name will be run")
+
 type storagePerfTest struct {
+	name             string
 	machineType      string
 	arch             string
 	diskType         string
@@ -36,6 +39,7 @@ const (
 
 var storagePerfTestConfig = []storagePerfTest{
 	{
+		name:             "h3-pd",
 		arch:             "X86_64",
 		machineType:      "h3-standard-88",
 		zone:             "us-central1-a",
@@ -45,6 +49,7 @@ var storagePerfTestConfig = []storagePerfTest{
 	},
 	/* temporarily disable c3d hyperdisk until the api allows it again
 	{
+		name: "c3d-hde",
 		arch: "X86_64",
 		machineType: "c3d-standard-180",
 		zone: "us-east4-c",
@@ -53,6 +58,7 @@ var storagePerfTestConfig = []storagePerfTest{
 		requiredFeatures: []string{"GVNIC"},
 	},*/
 	{
+		name:             "c3d-pd",
 		arch:             "X86_64",
 		machineType:      "c3d-standard-180",
 		zone:             "us-east4-c",
@@ -61,6 +67,15 @@ var storagePerfTestConfig = []storagePerfTest{
 		requiredFeatures: []string{"GVNIC"},
 	},
 	{
+		name:             "c3-lssd",
+		arch:             "X86_64",
+		machineType:      "c3-standard-88-lssd",
+		diskType:         "lssd",
+		cpuMetric:        "C3_CPUS",
+		requiredFeatures: []string{"GVNIC"},
+	},
+	{
+		name:             "c3-hde",
 		arch:             "X86_64",
 		machineType:      "c3-standard-88",
 		diskType:         imagetest.HyperdiskExtreme,
@@ -68,6 +83,7 @@ var storagePerfTestConfig = []storagePerfTest{
 		requiredFeatures: []string{"GVNIC"},
 	},
 	{
+		name:             "c3-pd",
 		arch:             "X86_64",
 		machineType:      "c3-standard-88",
 		diskType:         imagetest.PdBalanced,
@@ -75,6 +91,25 @@ var storagePerfTestConfig = []storagePerfTest{
 		requiredFeatures: []string{"GVNIC"},
 	},
 	{
+		name:             "c4-hdb",
+		zone:             "us-east5-b",
+		arch:             "X86_64",
+		machineType:      "c4-standard-192",
+		diskType:         imagetest.HyperdiskBalanced,
+		cpuMetric:        "CPUS",
+		requiredFeatures: []string{"GVNIC"},
+	},
+	{
+		name:             "c4-hde",
+		zone:             "us-east5-b",
+		arch:             "X86_64",
+		machineType:      "c4-standard-192",
+		diskType:         imagetest.HyperdiskExtreme,
+		cpuMetric:        "CPUS",
+		requiredFeatures: []string{"GVNIC"},
+	},
+	{
+		name:        "t2a-pd",
 		arch:        "ARM64",
 		machineType: "t2a-standard-48",
 		zone:        "us-central1-a",
@@ -82,25 +117,30 @@ var storagePerfTestConfig = []storagePerfTest{
 		cpuMetric:   "T2A_CPUS",
 	},
 	{
+		name:             "n4-hdb",
 		arch:             "X86_64",
 		machineType:      "n4-standard-64",
 		cpuMetric:        "CPUS",
 		requiredFeatures: []string{"GVNIC"},
 		diskType:         imagetest.HyperdiskBalanced,
+		zone:             "us-east4-b",
 	},
 	{
+		name:        "n2-hde",
 		arch:        "X86_64",
 		machineType: "n2-standard-80",
 		diskType:    imagetest.HyperdiskExtreme,
 		cpuMetric:   "N2_CPUS",
 	},
 	{
+		name:        "n2d-pd",
 		arch:        "X86_64",
 		machineType: "n2d-standard-64",
 		diskType:    imagetest.PdBalanced,
 		cpuMetric:   "N2D_CPUS",
 	},
 	{
+		name:           "n1-pd",
 		arch:           "X86_64",
 		machineType:    "n1-standard-64",
 		diskType:       imagetest.PdBalanced,
@@ -111,9 +151,13 @@ var storagePerfTestConfig = []storagePerfTest{
 
 // TestSetup sets up the test workflow.
 func TestSetup(t *imagetest.TestWorkflow) error {
+	filter, err := regexp.Compile(*testFilter)
+	if err != nil {
+		return fmt.Errorf("invalid test case filter: %v", err)
+	}
 	testVMs := []*imagetest.TestVM{}
 	for _, tc := range storagePerfTestConfig {
-		if skipTest(tc, t.Image) {
+		if skipTest(tc, t.Image) || !filter.MatchString(tc.name) {
 			continue
 		}
 
@@ -127,31 +171,38 @@ func TestSetup(t *imagetest.TestWorkflow) error {
 		if bootdiskSizeGB == mountdiskSizeGB {
 			mountdiskSizeGB++
 		}
+		bootDisk := &compute.Disk{Name: vmName + tc.machineType + tc.diskType, Type: imagetest.PdBalanced, SizeGb: bootdiskSizeGB, Zone: tc.zone}
+		disks := []*compute.Disk{bootDisk}
 
-		if err := t.WaitForDisksQuota(&daisy.QuotaAvailable{Metric: "SSD_TOTAL_GB", Units: float64(bootdiskSizeGB + mountdiskSizeGB), Region: region}); err != nil {
-			return err
-		}
-		if tc.cpuMetric != "" {
-			quota := &daisy.QuotaAvailable{Metric: tc.cpuMetric, Region: region}
-
-			i, err := strconv.ParseFloat(regexp.MustCompile("-[0-9]+$").FindString(tc.machineType)[1:], 64)
-			if err != nil {
+		if tc.diskType != "lssd" {
+			if err := t.WaitForDisksQuota(&daisy.QuotaAvailable{Metric: "SSD_TOTAL_GB", Units: float64(bootdiskSizeGB + mountdiskSizeGB), Region: region}); err != nil {
 				return err
 			}
-			quota.Units = i
-			if err := t.WaitForVMQuota(quota); err != nil {
-				return err
+			if tc.cpuMetric != "" {
+				quota := &daisy.QuotaAvailable{Metric: tc.cpuMetric, Region: region}
+				z := tc.zone
+				if z == "" {
+					z = t.Zone.Name
+				}
+				mt, err := t.Client.GetMachineType(t.Project.Name, z, tc.machineType)
+				if err != nil {
+					return fmt.Errorf("could not find machinetype %v", err)
+				}
+				quota.Units = float64(mt.GuestCpus)
+				if err := t.WaitForVMQuota(quota); err != nil {
+					return err
+				}
 			}
-		}
 
-		bootDisk := compute.Disk{Name: vmName + tc.machineType + tc.diskType, Type: imagetest.PdBalanced, SizeGb: bootdiskSizeGB, Zone: tc.zone}
-		mountDisk := compute.Disk{Name: mountDiskName + tc.machineType + tc.diskType, Type: tc.diskType, SizeGb: mountdiskSizeGB, Zone: tc.zone}
+			mountDisk := &compute.Disk{Name: mountDiskName + tc.machineType + tc.diskType, Type: tc.diskType, SizeGb: mountdiskSizeGB, Zone: tc.zone}
+			disks = append(disks, mountDisk)
+		}
 
 		daisyInst := &daisy.Instance{}
 		daisyInst.MachineType = tc.machineType
 		daisyInst.MinCpuPlatform = tc.minCPUPlatform
 		daisyInst.Zone = tc.zone
-		vm, err := t.CreateTestVMMultipleDisks([]*compute.Disk{&bootDisk, &mountDisk}, daisyInst)
+		vm, err := t.CreateTestVMMultipleDisks(disks, daisyInst)
 		if err != nil {
 			return err
 		}
@@ -163,12 +214,16 @@ func TestSetup(t *imagetest.TestWorkflow) error {
 		// set the expected performance values
 		var vmPerformanceTargets PerformanceTargets
 		var foundKey bool = false
-		if tc.diskType == imagetest.HyperdiskExtreme || tc.diskType == imagetest.HyperdiskBalanced {
+		if tc.diskType == imagetest.HyperdiskExtreme {
 			vmPerformanceTargets, foundKey = hyperdiskExtremeIOPSMap[tc.machineType]
-		} else if tc.diskType == imagetest.PdBalanced {
-			vmPerformanceTargets, foundKey = pdbalanceIOPSMap[tc.machineType]
 		} else if tc.diskType == imagetest.HyperdiskBalanced {
 			vmPerformanceTargets, foundKey = hyperdiskBalancedIOPSMap[tc.machineType]
+		} else if tc.diskType == imagetest.HyperdiskThroughput {
+			vmPerformanceTargets, foundKey = hyperdiskThroughputIOPSMap[tc.machineType]
+		} else if tc.diskType == imagetest.PdBalanced {
+			vmPerformanceTargets, foundKey = pdbalanceIOPSMap[tc.machineType]
+		} else if tc.diskType == "lssd" {
+			vmPerformanceTargets, foundKey = lssdIOPSMap[tc.machineType]
 		}
 		if !foundKey {
 			return fmt.Errorf("expected performance for machine type %s and disk type %s not found", tc.machineType, tc.diskType)
