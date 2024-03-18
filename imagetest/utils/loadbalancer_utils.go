@@ -36,17 +36,19 @@ const (
 // RunLoadBalancerBackend starts serving http on port 80. It sends its hostname
 // as a response to every connection, and shuts down when it receives a request
 // with the body "stop". It will fail the test if it didn't receieve any
-// requests to the IP of the load balancer.
+// requests sent to the IP of the load balancer.
 func RunLoadBalancerBackend(t *testing.T, lbip string) {
 	if IsWindows() {
-		out, err := RunPowershellCmd(`New-NetFirewallRule -DisplayName 'open80inbound' -LocalPort 80 -Action Allow -Profile 'Public' -Protocol TCP -Direction Inbound`)
-		if err != nil {
-			t.Fatalf("could not allow inbound traffic on port 80: %s %s %v", out.Stdout, out.Stderr, err)
+		addOrFail := func(cmd string) {
+			t.Helper()
+			if out, err := RunPowershellCmd(cmd); err != nil {
+				t.Fatalf("could not add firewall rule: %s %s %v", out.Stdout, out.Stderr, err)
+			}
 		}
-		out, err = RunPowershellCmd(`New-NetFirewallRule -DisplayName 'open80outbound' -LocalPort 80 -Action Allow -Profile 'Public' -Protocol TCP -Direction Outbound`)
-		if err != nil {
-			t.Fatalf("could not allow outbound traffic on port 80: %s %s %v", out.Stdout, out.Stderr, err)
-		}
+		addOrFail(`New-NetFirewallRule -DisplayName 'open80inbound' -LocalPort 80 -Action Allow -Protocol TCP -Direction Inbound`)
+		addOrFail(`New-NetFirewallRule -DisplayName 'open80outbound' -LocalPort 80 -Action Allow -Protocol TCP -Direction Outbound`)
+		addOrFail(`New-NetFirewallRule -DisplayName 'wsfchealthcheckinbound' -LocalPort 59998 -Action Allow -Protocol TCP -Direction Inbound`)
+		addOrFail(`New-NetFirewallRule -DisplayName 'wsfchealthcheckoutbound' -LocalPort 59998 -Action Allow -Protocol TCP -Direction Outbound`)
 	}
 	ctx := Context(t)
 	host, err := os.Hostname()
@@ -94,10 +96,10 @@ func RunLoadBalancerBackend(t *testing.T, lbip string) {
 }
 
 // GetLBTargetWithTimeout is a helper for fetching the body of an http response from the given host
-func GetLBTargetWithTimeout(ctx context.Context, t *testing.T, target string, body string) (string, error) {
+func GetLBTargetWithTimeout(ctx context.Context, t *testing.T, target string, reqbody string) (string, error) {
 	t.Helper()
 	client := http.Client { Timeout: time.Second } // Same timeout health checks will have
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/", target), strings.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/", target), strings.NewReader(reqbody))
 	if err != nil {
 		t.Fatalf("failed to create http request to %s: %v", target, err)
 	}
@@ -173,7 +175,8 @@ func WaitForLoadBalancerBackends(ctx context.Context, t *testing.T, backend1 str
 // Backend 2 (serving on port 80) --|    (GCE_VM_IP)               ^
 //                                                                 |
 //                                                            HTTP Health Check
-// WSFC load balancer architecture is the same as L3, but uses a WSFC health check instead of an HTTP health check
+// WSFC load balancer architecture is the same as L3, but uses a TCP health check to communicate with guest agent
+// See https://cloud.google.com/compute/docs/tutorials/running-windows-server-failover-clustering#configure_the_backend
 //
 // L7 load balancer architecture looks like this:
 // Backend 1 (serving on port 80) --|
@@ -393,11 +396,23 @@ func SetupLoadBalancer(ctx context.Context, t *testing.T, lbType LBLayer, backen
 	var hcRes *computepb.HealthCheck
 	switch lbType {
 	case WSFCLoadBalancer:
-		t.Fatal("TODO")
+		tcpHc := &computepb.TCPHealthCheck{
+			PortSpecification: proto.String("USE_FIXED_PORT"),
+			Port:              proto.Int32(59998),
+			Request: &lbip,
+			Response: proto.String("1"),
+		}
+		hcRes = &computepb.HealthCheck{
+			CheckIntervalSec: proto.Int32(1),
+			TimeoutSec:       proto.Int32(1),
+			Name:             &healthCheckName,
+			TcpHealthCheck:  tcpHc,
+			Type:             proto.String("TCP"),
+		}
 	case L3LoadBalancer:
 		fallthrough
 	case L7LoadBalancer:
-		// Create http health on port 80
+		// Create http health check on port 80
 		httpHc := &computepb.HTTPHealthCheck{
 			PortSpecification: proto.String("USE_FIXED_PORT"),
 			Port:              proto.Int32(80),
@@ -519,3 +534,52 @@ func SetupLoadBalancer(ctx context.Context, t *testing.T, lbType LBLayer, backen
 		waitFor(forwardingRuleClient.Insert(ctx, forwardingRuleReq))
 	}
 }
+
+func SetupADDomainController(ctx context.Context, t *testing.T, backend1, backend2, controller, adminpassword string) {
+	out, err := RunPowershellCmd(`$res = (Install-WindowsFeature AD-Domain-Services); if ($res.Success -ne "True"){ echo Failed } elseif ($res.RestartNeeded -ne "No"){ Restart-Computer -Force }`)
+	if err != nil || out.Stdout == "Failed" {
+		t.Fatalf("could not install AD-Domain-Services: %s %v", out.Stderr, err)
+	}
+	if out, err := RunPowershellCmd(`Get-ADDomain`); err != nil || strings.Contains(out.Stdout, "Unable to find a default server with Active Directory Web Services running") {
+		if out, err := RunPowershellCmd(fmt.Sprintf(`net user Administrator "%s"`, adminpassword)); err != nil {
+			t.Fatalf("could not set admin password: %s %s %v", out.Stdout, out.Stderr, err)
+		}
+		cmd := exec.CommandContext(ctx, `powershell.exe`, `-NonInteractive`, `-NoLogo`, `-NoProfile`, `"Install-ADDSForest -CreateDnsDelegation:$false -DomainName example.com -DomainNetbiosName WSFC -NoRebootOnCompletion:$false -Force:$true"`)
+		if err := cmd.Start() {
+			t.Fatalf("error running Install-ADDSForest: %v", err)
+		}
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			t.Fatalf("error getting Install-ADDSForest stdin: %v", err)
+		}
+		time.Sleep(time.Second)
+		io.WriteString(stdin, adminpassword)
+		time.Sleep(time.Second)
+		io.WriteString(stdin, adminpassword)
+		stdin.Close()
+		if err := cmd.Wait(); err != nil {
+			t.Fataltf("error waiting for Install-ADDSForest: %v", err)
+		}
+	}
+	t.Fatal("TODO")
+}
+
+func SetupADDomainNode(ctx context.Context, t *testing.T, controller string) {
+	out, err := RunPowershellCmd(`$res = (Install-WindowsFeature AD-Domain-Services); if ($res.Success -ne "True"){ echo Failed } elseif ($res.RestartNeeded -ne "No"){ Restart-Computer -Force }`)
+	if err != nil || out.Stdout == "Failed" {
+		t.Fatalf("could not install AD-Domain-Services: %s %v", out.Stderr, err)
+	}
+	if out, err := RunPowershellCmd(`Get-ADDomain`); err != nil || strings.Contains(out.Stdout, "Unable to find a default server with Active Directory Web Services running") {
+		if out, err := RunPowershellCmd(fmt.Sprintf(`net user Administrator "%s"`, adminpassword)); err != nil {
+			t.Fatalf("could not set admin password: %s %s %v", out.Stdout, out.Stderr, err)
+		}
+	}
+	t.Fatal("TODO")
+}
+
+func SetupFailoverCluster(ctx context,Context, t *testing.T, backend1, backend2, lbip string) {
+	t.Fatal("TODO")
+}
+// Add-WindowsFeature RSAT-Clustering-PowerShell
+// Install-WindowsFeature Failover-Clustering -IncludeManagementTools
+// New-Cluster -Name cluster1 -Node node1,node2 -StaticAddress = 10.1.2.100 -AdministrativeAccessPoint ActiveDirectoryAndDns -Force -NoStorage

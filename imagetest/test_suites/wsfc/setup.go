@@ -1,4 +1,4 @@
-package l3loadbalancer
+package wsfc
 
 import (
 	"github.com/GoogleCloudPlatform/compute-daisy"
@@ -8,18 +8,18 @@ import (
 
 var (
 	// Name is the name of the test package. It must match the directory name.
-	Name         = "l3loadbalancer"
-	l3IlbIP4Addr = "10.1.2.100"
+	Name         = "wsfc"
+	wsfcVIP = "10.1.2.100"
 
-	l3backendVM1IP4addr = "10.1.2.10"
-	l3backendVM2IP4addr = "10.1.2.20"
+	adBackend1IP4Addr = "10.1.2.10"
+	adBackend2IP4Addr = "10.1.2.20"
 
-	l3clientVMip4addr = "10.1.2.50"
+	adControllerIP4Addr = "10.1.2.50"
 )
 
 // TestSetup sets up the test workflow.
 func TestSetup(t *imagetest.TestWorkflow) error {
-	lbnet, err := t.CreateNetwork("loadbalancer", false)
+	lbnet, err := t.CreateNetwork("wsfc", false)
 	if err != nil {
 		return err
 	}
@@ -46,6 +46,7 @@ func TestSetup(t *imagetest.TestWorkflow) error {
 		if err := vm.SetPrivateIP(lbnet, ip); err != nil {
 			return nil, err
 		}
+		vm.AddMetadata("enable-wsfc", "true")
 		vm.RunTests(test)
 		return inst, nil
 	}
@@ -59,13 +60,13 @@ func TestSetup(t *imagetest.TestWorkflow) error {
 		return nil
 	}
 
-	if err := mkbackend("l3backend1", l3backendVM1IP4addr, "TestL3Backend"); err != nil {
+	if err := mkbackend("adbackend1", adBackend1IP4Addr, "TestWSFCBackend"); err != nil {
 		return err
 	}
-	if err := mkbackend("l3backend2", l3backendVM2IP4addr, "TestL3Backend"); err != nil {
+	if err := mkbackend("adbackend2", adBackend2IP4Addr, "TestWSFCBackend"); err != nil {
 		return err
 	}
-	if err := mkclient("l3client", l3clientVMip4addr, "TestL3Client"); err != nil {
+	if err := mkclient("adcontroller", adControllerIP4Addr, "TestWSFCClient"); err != nil {
 		return err
 	}
 	return nil

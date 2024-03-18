@@ -20,7 +20,9 @@ import (
 	"github.com/GoogleCloudPlatform/guest-test-infra/imagetest/test_suites/hotattach"
 	"github.com/GoogleCloudPlatform/guest-test-infra/imagetest/test_suites/imageboot"
 	"github.com/GoogleCloudPlatform/guest-test-infra/imagetest/test_suites/licensevalidation"
-	"github.com/GoogleCloudPlatform/guest-test-infra/imagetest/test_suites/loadbalancer"
+	"github.com/GoogleCloudPlatform/guest-test-infra/imagetest/test_suites/wsfc"
+	"github.com/GoogleCloudPlatform/guest-test-infra/imagetest/test_suites/l3loadbalancer"
+	"github.com/GoogleCloudPlatform/guest-test-infra/imagetest/test_suites/l7loadbalancer"
 	"github.com/GoogleCloudPlatform/guest-test-infra/imagetest/test_suites/metadata"
 	"github.com/GoogleCloudPlatform/guest-test-infra/imagetest/test_suites/network"
 	"github.com/GoogleCloudPlatform/guest-test-infra/imagetest/test_suites/networkperf"
@@ -146,8 +148,16 @@ func main() {
 			networkperf.TestSetup,
 		},
 		{
-			loadbalancer.Name,
-			loadbalancer.TestSetup,
+			wsfc.Name,
+			wsfc.TestSetup,
+		},
+		{
+			l3loadbalancer.Name,
+			l3loadbalancer.TestSetup,
+		},
+		{
+			l7loadbalancer.Name,
+			l7loadbalancer.TestSetup,
 		},
 		{
 			guestagent.Name,
