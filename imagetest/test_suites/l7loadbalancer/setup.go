@@ -1,4 +1,4 @@
-package loadbalancer
+package l7loadbalancer
 
 import (
 	"github.com/GoogleCloudPlatform/compute-daisy"
@@ -8,16 +8,12 @@ import (
 
 var (
 	// Name is the name of the test package. It must match the directory name.
-	Name         = "loadbalancer"
-	l3IlbIP4Addr = "10.1.2.100"
+	Name         = "l7loadbalancer"
 	l7IlbIP4Addr = "10.1.2.101"
 
-	l3backendVM1IP4addr = "10.1.2.10"
-	l3backendVM2IP4addr = "10.1.2.20"
 	l7backendVM1IP4addr = "10.1.2.30"
 	l7backendVM2IP4addr = "10.1.2.40"
 
-	l3clientVMip4addr = "10.1.2.50"
 	l7clientVMip4addr = "10.1.2.60"
 )
 
@@ -70,16 +66,6 @@ func TestSetup(t *imagetest.TestWorkflow) error {
 		}
 		inst.Scopes = append(inst.Scopes, "https://www.googleapis.com/auth/cloud-platform")
 		return nil
-	}
-
-	if err := mkbackend("l3backend1", l3backendVM1IP4addr, "TestL3Backend"); err != nil {
-		return err
-	}
-	if err := mkbackend("l3backend2", l3backendVM2IP4addr, "TestL3Backend"); err != nil {
-		return err
-	}
-	if err := mkclient("l3client", l3clientVMip4addr, "TestL3Client"); err != nil {
-		return err
 	}
 
 	if err := mkbackend("l7backend1", l7backendVM1IP4addr, "TestL7Backend"); err != nil {

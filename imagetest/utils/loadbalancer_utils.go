@@ -26,9 +26,11 @@ import (
 type LBLayer int
 const (
 	// L3 is a network passthrough passthrough load balancer
-	L3 LBLayer = iota
+	L3LoadBalancer LBLayer = iota
 	// L7 is an application load balancer.
-	L7
+	L7LoadBalancer
+	// WSFCLoadBalancer is a network passthrough load balancer using WSFC health checks
+	WSFCLoadBalancer
 )
 
 // RunLoadBalancerBackend starts serving http on port 80. It sends its hostname
@@ -94,6 +96,7 @@ func RunLoadBalancerBackend(t *testing.T, lbip string) {
 // GetLBTargetWithTimeout is a helper for fetching the body of an http response from the given host
 func GetLBTargetWithTimeout(ctx context.Context, t *testing.T, target string, body string) (string, error) {
 	t.Helper()
+	client := http.Client { Timeout: time.Second } // Same timeout health checks will have
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/", target), strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("failed to create http request to %s: %v", target, err)
@@ -115,7 +118,7 @@ func CheckBackendsInLoadBalancer(ctx context.Context, t *testing.T, lbip string)
 	var resp1, resp2 string
 	for ctx.Err() == nil {
 		time.Sleep(3 * time.Second) // Wait enough time for the health check and load balancer to update
-		r, err := getTargetWithTimeout(ctx, t, lbip, "stop")
+		r, err := GetLBTargetWithTimeout(ctx, t, lbip, "stop")
 		if err != nil || r == "no healthy upstream" {
 			continue
 		}
@@ -134,13 +137,13 @@ func CheckBackendsInLoadBalancer(ctx context.Context, t *testing.T, lbip string)
 	}
 }
 
-// WaitForLBBackends waits for the two backends to be serving, and adds a cleanup
+// WaitForLoadBalancerBackends waits for the two backends to be serving, and adds a cleanup
 // step to stop them on failure when the test is done.
-func WaitForLBBackends(ctx context.Context, t *testing.T, backend1 string, backend2 string) {
+func WaitForLoadBalancerBackends(ctx context.Context, t *testing.T, backend1 string, backend2 string) {
 	t.Cleanup(func() {
 		if t.Failed() {
-			getTargetWithTimeout(ctx, t, backend1, "stop")
-			getTargetWithTimeout(ctx, t, backend2, "stop")
+			GetLBTargetWithTimeout(ctx, t, backend1, "stop")
+			GetLBTargetWithTimeout(ctx, t, backend2, "stop")
 		}
 	})
 	wait := func(backend string) {
@@ -148,7 +151,7 @@ func WaitForLBBackends(ctx context.Context, t *testing.T, backend1 string, backe
 			if err := ctx.Err(); err != nil {
 				t.Fatalf("test context expired before %s is serving: %v", backend, err)
 			}
-			_, err := getTargetWithTimeout(ctx, t, backend, "")
+			_, err := GetLBTargetWithTimeout(ctx, t, backend, "")
 			if err == nil {
 				break
 			}
@@ -170,6 +173,7 @@ func WaitForLBBackends(ctx context.Context, t *testing.T, backend1 string, backe
 // Backend 2 (serving on port 80) --|    (GCE_VM_IP)               ^
 //                                                                 |
 //                                                            HTTP Health Check
+// WSFC load balancer architecture is the same as L3, but uses a WSFC health check instead of an HTTP health check
 //
 // L7 load balancer architecture looks like this:
 // Backend 1 (serving on port 80) --|
@@ -293,7 +297,7 @@ func SetupLoadBalancer(ctx context.Context, t *testing.T, lbType LBLayer, backen
 			ForwardingRule: forwardingRuleName,
 		}
 		tryWait(forwardingRuleClient.Delete(ctx, deleteFRReq))
-		if lbType == "L7" { // Clean up extra resources from L7 load balancers
+		if lbType == L7LoadBalancer { // Clean up extra resources from L7 load balancers
 			deleteHttpProxyReq := &computepb.DeleteRegionTargetHttpProxyRequest{
 				Project:         project,
 				Region:          region,
@@ -338,7 +342,9 @@ func SetupLoadBalancer(ctx context.Context, t *testing.T, lbType LBLayer, backen
 	})
 
 	switch lbType {
-	case "L3":
+	case WSFCLoadBalancer:
+		fallthrough
+	case L3LoadBalancer:
 		// Create network endpoint group in lbnet and lbsubnet with GCE_VM_IP type
 		neg := &computepb.NetworkEndpointGroup{
 			Name:                &negName,
@@ -352,7 +358,7 @@ func SetupLoadBalancer(ctx context.Context, t *testing.T, lbType LBLayer, backen
 			NetworkEndpointGroupResource: neg,
 		}
 		waitFor(negClient.Insert(ctx, insertNegReq))
-	case "L7":
+	case L7LoadBalancer:
 		// Create network endpoint group in lbnet and lbsubnet with GCE_VM_IP_PORT type
 		neg := &computepb.NetworkEndpointGroup{
 			Name:                &negName,
@@ -383,18 +389,28 @@ func SetupLoadBalancer(ctx context.Context, t *testing.T, lbType LBLayer, backen
 		Zone:    zone,
 	}
 	waitFor(negClient.AttachNetworkEndpoints(ctx, addBackendsReq))
-	// Create http health on port 80
-	httpHc := &computepb.HTTPHealthCheck{
-		PortSpecification: proto.String("USE_FIXED_PORT"),
-		Port:              proto.Int32(80),
+
+	var hcRes *computepb.HealthCheck
+	switch lbType {
+	case WSFCLoadBalancer:
+		t.Fatal("TODO")
+	case L3LoadBalancer:
+		fallthrough
+	case L7LoadBalancer:
+		// Create http health on port 80
+		httpHc := &computepb.HTTPHealthCheck{
+			PortSpecification: proto.String("USE_FIXED_PORT"),
+			Port:              proto.Int32(80),
+		}
+		hcRes = &computepb.HealthCheck{
+			CheckIntervalSec: proto.Int32(1),
+			TimeoutSec:       proto.Int32(1),
+			Name:             &healthCheckName,
+			HttpHealthCheck:  httpHc,
+			Type:             proto.String("HTTP"),
+		}
 	}
-	hcRes := &computepb.HealthCheck{
-		CheckIntervalSec: proto.Int32(1),
-		TimeoutSec:       proto.Int32(1),
-		Name:             &healthCheckName,
-		HttpHealthCheck:  httpHc,
-		Type:             proto.String("HTTP"),
-	}
+
 	insertHealthCheckReq := &computepb.InsertRegionHealthCheckRequest{
 		Project:             project,
 		HealthCheckResource: hcRes,
@@ -403,7 +419,9 @@ func SetupLoadBalancer(ctx context.Context, t *testing.T, lbType LBLayer, backen
 	waitFor(healthCheckClient.Insert(ctx, insertHealthCheckReq))
 
 	switch lbType {
-	case "L3":
+	case WSFCLoadBalancer:
+		fallthrough
+	case L3LoadBalancer:
 		// Create INTERNAL tcp backend service with health check
 		backendService := &computepb.BackendService{
 			HealthChecks: []string{fmt.Sprintf("projects/%s/regions/%s/healthChecks/%s", project, region, healthCheckName)},
@@ -438,7 +456,7 @@ func SetupLoadBalancer(ctx context.Context, t *testing.T, lbType LBLayer, backen
 			ForwardingRuleResource: forwardingRule,
 		}
 		waitFor(forwardingRuleClient.Insert(ctx, forwardingRuleReq))
-	case "L7":
+	case L7LoadBalancer:
 		// Create INTERNAL_MANAGED http backend service with health check
 		backendService := &computepb.BackendService{
 			HealthChecks: []string{fmt.Sprintf("projects/%s/regions/%s/healthChecks/%s", project, region, healthCheckName)},

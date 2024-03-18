@@ -77,4 +77,5 @@ func TestSetup(t *imagetest.TestWorkflow) error {
 	if err := mkclient("l3client", l3clientVMip4addr, "TestL3Client"); err != nil {
 		return err
 	}
+	return nil
 }
