@@ -9,7 +9,7 @@ import (
 	"github.com/GoogleCloudPlatform/guest-test-infra/imagetest/utils"
 )
 
-func TestL3Backend(t *testing.T) { utils.RunLoadBalancerBackend(t, l3IlbIP4Addr) }
+func TestL3Backend(t *testing.T) { utils.RunLoadBalancerBackend(utils.Context(t), t, utils.L3LoadBalancer, l3IlbIP4Addr) }
 
 func TestL3Client(t *testing.T) {
 	ctx := utils.Context(t)

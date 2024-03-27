@@ -25,7 +25,6 @@ func TestWaitForWinrmConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not fetch winrm password: %v", err)
 	}
-	passwd = strings.TrimSpace(passwd)
 	runOrFail(t, fmt.Sprintf(`net user "%s" "%s" /add`, user, passwd), fmt.Sprintf("could not add user %s", user))
 	runOrFail(t, fmt.Sprintf(`Add-LocalGroupMember -Group Administrators -Member "%s"`, user), fmt.Sprintf("could not add user %s to administrators", user))
 	t.Logf("winrm target boot succesfully at %d", time.Now().UnixNano())
@@ -41,7 +40,6 @@ func TestWinrmConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not fetch winrm password: %v", err)
 	}
-	passwd = strings.TrimSpace(passwd)
 	runOrFail(t, fmt.Sprintf(`winrm set winrm/config/client '@{TrustedHosts="%s"}'`, target), "could not trust target")
 	for {
 		if ctx.Err() != nil {
