@@ -97,6 +97,7 @@ func TestSetup(t *imagetest.TestWorkflow) error {
 			return err
 		}
 		inst.CanIpForward = true
+		inst.Scopes = append(inst.Scopes, "https://www.googleapis.com/auth/compute")
 		vm.AddMetadata("enable-wsfc", "true")
 		vm.AddMetadata("use-static-ip", ip)
 		vm.AddMetadata("sysprep-specialize-script-ps1", `Install-WindowsFeature -Name File-Services, Failover-Clustering -IncludeManagementTools`)
